@@ -1,0 +1,14 @@
+
+<!-- saved from url=(0056)https://accounts.binance.com/zh-CN/login/switch/callback -->
+<html><head><meta http-equiv="Content-Type" content="text/html; charset=windows-1252"><script>
+    window.addEventListener('storage', (e) => {
+      if(e.key === 'refreshPage' && e.newValue) {
+         window.parent.postMessage('refreshPageToParent', '*')
+      }
+    })
+    window.addEventListener('message', function(event) {
+      if (event.data === 'refreshPage') {
+          window.localStorage.setItem('refreshPage', Date.now().toString())
+      }
+    })
+  </script></head><body></body></html>

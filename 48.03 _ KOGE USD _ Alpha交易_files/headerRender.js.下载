@@ -1,0 +1,1 @@
+window.hydarteHandler(React.createElement(window.headerUMD.default), document.getElementById('__APP_HEADER'))
