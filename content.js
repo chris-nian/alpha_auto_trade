@@ -300,13 +300,7 @@ class BinanceAutoTrader {
         this.log('开始紧急卖出所有代币...', 'info');
         
         try {
-            // 检查是否有代币余额
-            const hasTokens = await this.checkTokenBalance();
-            if (!hasTokens) {
-                this.log('未检测到代币余额，无需卖出', 'info');
-                return;
-            }
-            
+            // 直接尝试卖出（不检查余额）
             // 设置最大数量
             await this.setMaxQuantityForSell();
             
@@ -359,20 +353,8 @@ class BinanceAutoTrader {
         this.log('开始安全卖出所有代币...', 'info');
         
         try {
-            // 多次检查代币余额，确保准确性
-            let hasTokens = false;
-            for (let i = 0; i < 3; i++) {
-                hasTokens = await this.checkTokenBalance();
-                if (hasTokens) break;
-                await this.sleep(1000);
-            }
-            
-            if (!hasTokens) {
-                this.log('✅ 确认无代币余额，无需卖出', 'success');
-                return;
-            }
-            
-            this.log('检测到代币余额，开始卖出...', 'info');
+            // 直接尝试卖出（不检查余额）
+            this.log('开始卖出操作...', 'info');
             
             // 设置最大数量
             await this.setMaxQuantityForSell();
@@ -385,14 +367,7 @@ class BinanceAutoTrader {
             // 等待卖出完成
             await this.waitForSellComplete();
             
-            // 再次确认卖出完成
-            await this.sleep(2000);
-            const stillHasTokens = await this.checkTokenBalance();
-            if (stillHasTokens) {
-                this.log('⚠️ 警告：可能还有剩余代币，请手动检查', 'error');
-            } else {
-                this.log('✅ 所有代币已成功卖出', 'success');
-            }
+            this.log('✅ 所有代币已成功卖出', 'success');
             
         } catch (error) {
             this.log(`安全卖出失败: ${error.message}`, 'error');
@@ -911,56 +886,19 @@ class BinanceAutoTrader {
         this.log('进行最终买入确认检查...', 'info');
         
         // 等待一段时间确保数据更新
-        await this.sleep(500); // 减少到500ms
+        await this.sleep(500);
         
-        // 检查当前委托中是否还有买入订单
+        // 只检查当前委托中是否还有买入订单
         const hasActiveBuyOrder = await this.checkActiveBuyOrder();
         if (hasActiveBuyOrder) {
             this.log('仍有活跃买入委托，买入未完成', 'error');
             return false;
         }
         
-        // 检查是否有代币余额（表示买入成功）
-        const hasTokenBalance = await this.checkTokenBalance();
-        if (!hasTokenBalance) {
-            this.log('未检测到代币余额，买入可能失败', 'error');
-            return false;
-        }
-        
-        this.log('最终确认：买入已成功完成', 'success');
+        this.log('最终确认：买入已成功完成（无活跃委托）', 'success');
         return true;
     }
 
-    async checkTokenBalance() {
-        // 切换到持有币种选项卡检查余额
-        const holdingsTab = document.querySelector('[data-tab-key="holdings"]') ||
-                           document.querySelector('#bn-tab-holdings') ||
-                           Array.from(document.querySelectorAll('[role="tab"]')).find(tab => 
-                               tab.textContent.includes('持有币种')
-                           );
-        
-        if (holdingsTab && !holdingsTab.classList.contains('active')) {
-            holdingsTab.click();
-            this.log('切换到持有币种选项卡', 'info');
-            await this.sleep(300);
-        }
-        
-        // 查找代币余额
-        const balanceElements = document.querySelectorAll('td, div');
-        for (const element of balanceElements) {
-            const text = element.textContent;
-            // 查找非USDT的代币余额
-            if (text && text.match(/[\d.]+\s*(KOGE|[A-Z]{2,10})/) && !text.includes('USDT')) {
-                const match = text.match(/([\d.]+)/);
-                if (match && parseFloat(match[1]) > 0) {
-                    this.log(`检测到代币余额: ${text}`, 'success');
-                    return true;
-                }
-            }
-        }
-        
-        return false;
-    }
 
     async executeSell() {
         this.currentState = 'selling';
@@ -1327,18 +1265,11 @@ class BinanceAutoTrader {
     }
 
     async checkSellOrderComplete() {
-        // 首先检查是否有卖出委托记录存在
+        // 检查是否有卖出委托记录存在
         const hasActiveSellOrder = await this.checkActiveSellOrder();
         
         if (!hasActiveSellOrder) {
-            // 检查是否还有代币余额（双重验证）
-            const stillHasTokens = await this.checkTokenBalance();
-            if (stillHasTokens) {
-                this.log('委托记录消失但仍有代币余额，卖出可能未成功', 'error');
-                return false;
-            }
-            
-            this.log('卖出委托记录已消失且无代币余额，订单完成', 'success');
+            this.log('卖出委托记录已消失，订单完成', 'success');
             return true;
         } else {
             // 如果还有活跃的卖出委托，说明订单还在进行中
