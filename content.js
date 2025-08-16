@@ -14,7 +14,39 @@ class BinanceAutoTrader {
         this.maxTradeCount = 0; // 最大交易次数，0表示无限制
         this.currentTradeCount = 0; // 当前交易次数
         
+        // DOM元素缓存
+        this.cachedElements = {
+            buyTab: null,
+            sellTab: null,
+            buyButton: null,
+            sellButton: null,
+            totalInput: null,
+            confirmButton: null,
+            lastCacheTime: 0
+        };
+        
         this.init();
+    }
+
+    // DOM元素缓存和获取方法
+    getCachedElement(key, selector, refresh = false) {
+        const now = Date.now();
+        const cacheExpiry = 5000; // 5秒缓存过期
+        
+        if (refresh || !this.cachedElements[key] || (now - this.cachedElements.lastCacheTime) > cacheExpiry) {
+            this.cachedElements[key] = document.querySelector(selector);
+            this.cachedElements.lastCacheTime = now;
+        }
+        
+        return this.cachedElements[key];
+    }
+
+    clearElementCache() {
+        Object.keys(this.cachedElements).forEach(key => {
+            if (key !== 'lastCacheTime') {
+                this.cachedElements[key] = null;
+            }
+        });
     }
 
     init() {
@@ -276,7 +308,7 @@ class BinanceAutoTrader {
             }
             
             // 设置最大数量
-            await this.setMaxQuantity();
+            await this.setMaxQuantityForSell();
             
             // 点击卖出按钮
             await this.clickSellButton();
@@ -343,7 +375,7 @@ class BinanceAutoTrader {
             this.log('检测到代币余额，开始卖出...', 'info');
             
             // 设置最大数量
-            await this.setMaxQuantity();
+            await this.setMaxQuantityForSell();
             
             // 点击卖出按钮
             await this.clickSellButton();
@@ -434,8 +466,14 @@ class BinanceAutoTrader {
                 }
 
                 // 步骤3: 执行卖出
-                await this.executeSellWithRetry();
+                const sellSuccess = await this.executeSellWithRetry();
                 if (!this.isRunning) break;
+                
+                if (!sellSuccess) {
+                    this.log('卖出操作失败，跳过此轮交易', 'error');
+                    await this.sleep(2000); // 等待2秒后重试
+                    continue;
+                }
 
                 // 步骤4: 等待卖出完成
                 await this.waitForSellComplete();
@@ -445,7 +483,8 @@ class BinanceAutoTrader {
                 this.currentTradeCount++; // 增加交易次数
                 this.updateTradeCounter(); // 更新交易次数显示
                 
-                this.log(`第 ${this.currentTradeCount} 轮交易完成`, 'success');
+                const tradeDuration = Date.now() - this.tradeStartTime;
+        this.log(`第 ${this.currentTradeCount} 轮交易完成 (耗时: ${tradeDuration}ms)`, 'success');
                 
                 // 检查是否达到交易次数限制
                 if (this.maxTradeCount > 0 && this.currentTradeCount >= this.maxTradeCount) {
@@ -465,7 +504,7 @@ class BinanceAutoTrader {
                 }
                 
                 this.log('等待下一轮交易...', 'info');
-                await this.sleep(2000); // 等待2秒后开始下一轮
+                await this.sleep(500); // 减少到500ms后开始下一轮
 
             } catch (error) {
                 consecutiveErrors++;
@@ -515,16 +554,20 @@ class BinanceAutoTrader {
         for (let i = 0; i < maxRetries; i++) {
             try {
                 await this.executeSell();
-                return;
+                return true; // 返回成功标记
             } catch (error) {
                 this.log(`卖出操作失败 (${i + 1}/${maxRetries}): ${error.message}`, 'error');
-                if (i === maxRetries - 1) throw error;
+                if (i === maxRetries - 1) {
+                    this.log('所有卖出重试都失败，跳过此轮交易', 'error');
+                    return false; // 返回失败标记
+                }
                 await this.sleep(2000);
             }
         }
     }
 
     async executeBuy() {
+        this.tradeStartTime = Date.now(); // 记录交易开始时间
         this.currentState = 'buying';
         this.log('开始执行买入操作', 'info');
 
@@ -542,12 +585,14 @@ class BinanceAutoTrader {
 
     async switchToBuyTab() {
         this.log('开始切换到买入选项卡', 'info');
-        this.debugTabState();
         
-        // 精确查找买入选项卡 - 必须同时包含ID和正确的类名
-        const buyTab = document.querySelector('#bn-tab-0.bn-tab__buySell') ||
-                      document.querySelector('.bn-tab__buySell[aria-controls="bn-tab-pane-0"]') ||
-                      document.querySelector('.bn-tab__buySell:first-child');
+        // 使用缓存的买入选项卡
+        let buyTab = this.getCachedElement('buyTab', '#bn-tab-0.bn-tab__buySell');
+        if (!buyTab) {
+            buyTab = document.querySelector('.bn-tab__buySell[aria-controls="bn-tab-pane-0"]') ||
+                    document.querySelector('.bn-tab__buySell:first-child');
+            this.cachedElements.buyTab = buyTab;
+        }
         
         if (!buyTab) {
             throw new Error('未找到买入选项卡');
@@ -581,9 +626,9 @@ class BinanceAutoTrader {
                buyTab.classList.contains('active');
     }
 
-    async waitForBuyTabSwitch(maxAttempts = 10) {
+    async waitForBuyTabSwitch(maxAttempts = 6) { // 减少重试次数
         for (let i = 0; i < maxAttempts; i++) {
-            await this.sleep(300);
+            await this.sleep(150); // 减少等待时间
             
             if (this.isBuyTabActive()) {
                 this.log('买入选项卡切换成功', 'success');
@@ -605,14 +650,17 @@ class BinanceAutoTrader {
     }
 
     async setTotalAmount(amount) {
-        // 查找成交额输入框
-        const totalInput = document.querySelector('#limitTotal') ||
-                          document.querySelector('input[placeholder*="最小"]') ||
-                          document.querySelector('input[step="1e-8"]') ||
-                          Array.from(document.querySelectorAll('input[type="text"]')).find(input => {
-                              const container = input.closest('.w-full');
-                              return container && container.querySelector('div:contains("成交额")');
-                          });
+        // 使用缓存的成交额输入框
+        let totalInput = this.getCachedElement('totalInput', '#limitTotal');
+        if (!totalInput) {
+            totalInput = document.querySelector('input[placeholder*="最小"]') ||
+                        document.querySelector('input[step="1e-8"]') ||
+                        Array.from(document.querySelectorAll('input[type="text"]')).find(input => {
+                            const container = input.closest('.w-full');
+                            return container && container.querySelector('div:contains("成交额")');
+                        });
+            this.cachedElements.totalInput = totalInput;
+        }
 
         if (!totalInput) {
             throw new Error('未找到成交额输入框');
@@ -631,16 +679,19 @@ class BinanceAutoTrader {
         totalInput.dispatchEvent(inputEvent);
         totalInput.dispatchEvent(changeEvent);
         
-        await this.sleep(300);
+        await this.sleep(100); // 减少到100ms
         this.log(`设置成交额: ${amount} USDT`, 'info');
     }
 
     async clickBuyButton() {
-        const buyButton = document.querySelector('.bn-button__buy') ||
-                         document.querySelector('button[class*="buy"]') ||
-                         Array.from(document.querySelectorAll('button')).find(btn => 
-                             btn.textContent.includes('买入') && !btn.disabled
-                         );
+        let buyButton = this.getCachedElement('buyButton', '.bn-button__buy');
+        if (!buyButton) {
+            buyButton = document.querySelector('button[class*="buy"]') ||
+                       Array.from(document.querySelectorAll('button')).find(btn => 
+                           btn.textContent.includes('买入') && !btn.disabled
+                       );
+            this.cachedElements.buyButton = buyButton;
+        }
 
         if (!buyButton) {
             throw new Error('未找到买入按钮');
@@ -651,33 +702,33 @@ class BinanceAutoTrader {
         }
 
         buyButton.click();
-        await this.sleep(1000);
+        await this.sleep(300); // 减少到300ms
         this.log('点击买入按钮', 'success');
 
         // 检查并处理确认弹窗
-        await this.handleConfirmationDialog();
+        await this.handleBuyConfirmationDialog();
     }
 
-    async handleConfirmationDialog() {
-        this.log('检查确认弹窗...', 'info');
+    async handleBuyConfirmationDialog() {
+        this.log('检查买入确认弹窗...', 'info');
         
         // 等待弹窗出现
-        await this.sleep(1000);
+        await this.sleep(200);
         
         // 查找确认弹窗中的"继续"按钮
-        const confirmButton = this.findConfirmButton();
+        const confirmButton = this.findBuyConfirmButton();
         
         if (confirmButton) {
-            this.log('发现确认弹窗，点击继续', 'info');
+            this.log('发现买入确认弹窗，点击继续', 'info');
             confirmButton.click();
-            await this.sleep(1000);
+            await this.sleep(300);
             this.log('确认买入订单', 'success');
         } else {
-            this.log('未发现确认弹窗，继续执行', 'info');
+            this.log('未发现买入确认弹窗，继续执行', 'info');
         }
     }
 
-    findConfirmButton() {
+    findBuyConfirmButton() {
         // 方法1: 基于具体DOM结构查找 - 查找包含px-[24px] pb-[24px]的容器
         const confirmContainers = document.querySelectorAll('[class*="px-[24px]"][class*="pb-[24px]"]');
         for (const container of confirmContainers) {
@@ -822,7 +873,7 @@ class BinanceAutoTrader {
         if (currentOrderTab && !currentOrderTab.classList.contains('active')) {
             currentOrderTab.click();
             this.log('切换到当前委托选项卡', 'info');
-            await this.sleep(500); // 等待切换完成
+            await this.sleep(200); // 减少到200ms
         }
         
         // 确保在限价选项卡
@@ -835,7 +886,7 @@ class BinanceAutoTrader {
         if (limitTab && !limitTab.classList.contains('active')) {
             limitTab.click();
             this.log('切换到限价委托选项卡', 'info');
-            await this.sleep(500); // 等待切换完成
+            await this.sleep(200); // 减少到200ms
         }
     }
 
@@ -860,7 +911,7 @@ class BinanceAutoTrader {
         this.log('进行最终买入确认检查...', 'info');
         
         // 等待一段时间确保数据更新
-        await this.sleep(2000);
+        await this.sleep(500); // 减少到500ms
         
         // 检查当前委托中是否还有买入订单
         const hasActiveBuyOrder = await this.checkActiveBuyOrder();
@@ -891,7 +942,7 @@ class BinanceAutoTrader {
         if (holdingsTab && !holdingsTab.classList.contains('active')) {
             holdingsTab.click();
             this.log('切换到持有币种选项卡', 'info');
-            await this.sleep(1000); // 等待选项卡切换完成
+            await this.sleep(300);
         }
         
         // 查找代币余额
@@ -918,8 +969,11 @@ class BinanceAutoTrader {
         // 1. 切换到卖出选项卡
         await this.switchToSellTab();
         
-        // 2. 拉满数量滑杆
-        await this.setMaxQuantity();
+        // 2. 直接设置最大数量（不设置成交额）
+        const setQuantitySuccess = await this.setMaxQuantityForSell();
+        if (!setQuantitySuccess) {
+            throw new Error('设置卖出数量失败');
+        }
         
         // 3. 点击卖出按钮
         await this.clickSellButton();
@@ -929,12 +983,14 @@ class BinanceAutoTrader {
 
     async switchToSellTab() {
         this.log('开始切换到卖出选项卡', 'info');
-        this.debugTabState();
         
-        // 精确查找卖出选项卡 - 必须同时包含ID和正确的类名
-        const sellTab = document.querySelector('#bn-tab-1.bn-tab__buySell') ||
-                       document.querySelector('.bn-tab__buySell[aria-controls="bn-tab-pane-1"]') ||
-                       document.querySelector('.bn-tab__buySell:nth-child(2)');
+        // 使用缓存的卖出选项卡
+        let sellTab = this.getCachedElement('sellTab', '#bn-tab-1.bn-tab__buySell');
+        if (!sellTab) {
+            sellTab = document.querySelector('.bn-tab__buySell[aria-controls="bn-tab-pane-1"]') ||
+                     document.querySelector('.bn-tab__buySell:nth-child(2)');
+            this.cachedElements.sellTab = sellTab;
+        }
         
         if (!sellTab) {
             throw new Error('未找到卖出选项卡');
@@ -968,9 +1024,9 @@ class BinanceAutoTrader {
                sellTab.classList.contains('active');
     }
 
-    async waitForSellTabSwitch(maxAttempts = 10) {
+    async waitForSellTabSwitch(maxAttempts = 6) { // 减少重试次数
         for (let i = 0; i < maxAttempts; i++) {
-            await this.sleep(300);
+            await this.sleep(150); // 减少等待时间
             
             if (this.isSellTabActive()) {
                 this.log('卖出选项卡切换成功', 'success');
@@ -1012,76 +1068,184 @@ class BinanceAutoTrader {
         }
     }
 
-    async setMaxQuantity() {
-        // 查找数量滑杆
-        const slider = document.querySelector('.bn-slider') ||
-                      document.querySelector('input[type="range"]') ||
-                      document.querySelector('[role="slider"]');
-
-        if (slider) {
-            // 设置滑杆到最大值
-            slider.value = slider.max || 100;
-            slider.dispatchEvent(new Event('input', { bubbles: true }));
-            slider.dispatchEvent(new Event('change', { bubbles: true }));
+    async setMaxQuantityForSell() {
+        this.log('开始设置最大卖出数量...', 'info');
+        
+        // 先清理缓存，确保获取最新元素
+        this.clearElementCache();
+        
+        const maxRetries = 5; // 最多重试5次
+        
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            this.log(`第 ${attempt} 次尝试设置最大数量...`, 'info');
             
-            await this.sleep(300);
-            this.log('设置最大卖出数量', 'info');
-        } else {
-            // 如果没有滑杆，尝试点击100%按钮
-            const maxButton = Array.from(document.querySelectorAll('button, div')).find(btn => 
-                btn.textContent.includes('100%') || btn.textContent.includes('Max')
-            );
+            // 方法1: 点击100%按钮
+            const maxButtons = [
+                ...Array.from(document.querySelectorAll('button')).filter(btn => 
+                    btn.textContent.includes('100%') && btn.offsetParent !== null
+                ),
+                ...Array.from(document.querySelectorAll('div')).filter(div => 
+                    div.textContent.includes('100%') && div.onclick && div.offsetParent !== null
+                )
+            ];
             
-            if (maxButton) {
-                maxButton.click();
+            if (maxButtons.length > 0) {
+                this.log(`找到1${maxButtons.length}个100%按钮`, 'info');
+                maxButtons[0].click();
+                await this.sleep(300); // 稍微增加等待时间
+                
+                if (await this.verifySliderValue()) {
+                    this.log('✅ 100%按钮设置成功', 'success');
+                    return true;
+                }
+            }
+            
+            // 方法2: 直接操作滑杆
+            const slider = document.querySelector('.bn-slider');
+            if (slider) {
+                this.log(`找到滑杆，当前值: ${slider.value}`, 'info');
+                
+                // 多种方式设置滑杆值
+                slider.value = '100';
+                slider.setAttribute('aria-valuenow', '100');
+                slider.setAttribute('aria-valuetext', '100 units');
+                
+                // 触发多个事件
+                const events = ['input', 'change', 'blur', 'focus'];
+                events.forEach(eventType => {
+                    slider.dispatchEvent(new Event(eventType, { bubbles: true }));
+                });
+                
+                // 也试试触发鼠标事件
+                slider.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+                
                 await this.sleep(300);
-                this.log('点击最大数量按钮', 'info');
-            } else {
-                this.log('未找到数量设置控件', 'error');
+                
+                if (await this.verifySliderValue()) {
+                    this.log('✅ 滑杆直接设置成功', 'success');
+                    return true;
+                }
+            }
+            
+            // 方法3: 点击滑杆的100%点
+            const sliderSteps = document.querySelectorAll('.bn-slider-track-step');
+            if (sliderSteps.length > 0) {
+                const lastStep = sliderSteps[sliderSteps.length - 1]; // 最后一个应该是100%
+                this.log(`点击滑杆100%点`, 'info');
+                lastStep.click();
+                await this.sleep(300);
+                
+                if (await this.verifySliderValue()) {
+                    this.log('✅ 滑杆点击设置成功', 'success');
+                    return true;
+                }
+            }
+            
+            this.log(`第 ${attempt} 次尝试失败，滑杆值: ${slider ? slider.value : '未找到滑杆'}`, 'error');
+            
+            if (attempt < maxRetries) {
+                await this.sleep(500); // 等待后重试
             }
         }
+        
+        this.log('❌ 所有方法都无法设置滑杆到100%', 'error');
+        return false;
+    }
+    
+    async verifySliderValue() {
+        const slider = document.querySelector('.bn-slider');
+        if (!slider) {
+            this.log('未找到滑杆元素', 'error');
+            return false;
+        }
+        
+        const currentValue = slider.value;
+        const ariaValue = slider.getAttribute('aria-valuenow');
+        
+        this.log(`滑杆当前值: value=${currentValue}, aria-valuenow=${ariaValue}`, 'info');
+        
+        // 检查滑杆是否在100%
+        if (currentValue === '100' || ariaValue === '100') {
+            // 再检查卖出按钮是否可用
+            const sellButton = document.querySelector('.bn-button__sell') ||
+                              Array.from(document.querySelectorAll('button')).find(btn => 
+                                  btn.textContent.includes('卖出')
+                              );
+            
+            if (sellButton && !sellButton.disabled) {
+                this.log('✅ 滑杆已设置为100%，卖出按钮可用', 'success');
+                return true;
+            } else {
+                this.log('滑杆是100%但卖出按钮不可用', 'error');
+                return false;
+            }
+        }
+        
+        this.log(`滑杆值不是100%，当前: ${currentValue}`, 'error');
+        return false;
     }
 
     async clickSellButton() {
-        const sellButton = document.querySelector('.bn-button__sell') ||
-                          document.querySelector('button[class*="sell"]') ||
-                          Array.from(document.querySelectorAll('button')).find(btn => 
-                              btn.textContent.includes('卖出') && !btn.disabled
-                          );
+        // 先检查滑杆是否在100%
+        if (!await this.verifySliderValue()) {
+            throw new Error('滑杆不在100%，不能点击卖出');
+        }
+        
+        let sellButton = this.getCachedElement('sellButton', '.bn-button__sell');
+        if (!sellButton) {
+            sellButton = document.querySelector('button[class*="sell"]') ||
+                        Array.from(document.querySelectorAll('button')).find(btn => 
+                            btn.textContent.includes('卖出')
+                        );
+            this.cachedElements.sellButton = sellButton;
+        }
 
         if (!sellButton) {
             throw new Error('未找到卖出按钮');
         }
 
         if (sellButton.disabled) {
-            throw new Error('卖出按钮不可用');
+            throw new Error('卖出按钮被禁用');
         }
 
+        this.log(`点击卖出按钮: "${sellButton.textContent.trim()}"`, 'info');
+        
         sellButton.click();
-        await this.sleep(1000);
-        this.log('点击卖出按钮', 'success');
-
-        // 检查并处理确认弹窗
-        await this.handleSellConfirmationDialog();
+        await this.sleep(200); // 等待点击效果
+        
+        // 检查并处理确认弹窗（必须出现）
+        const confirmationSuccess = await this.waitForSellConfirmationDialog();
+        if (!confirmationSuccess) {
+            throw new Error('卖出确认弹窗未出现，订单失败');
+        }
+        
+        this.log('卖出订单确认成功', 'success');
     }
 
-    async handleSellConfirmationDialog() {
-        this.log('检查卖出确认弹窗...', 'info');
+    async waitForSellConfirmationDialog() {
+        this.log('等待卖出确认弹窗出现...', 'info');
         
-        // 等待弹窗出现
-        await this.sleep(1000);
+        const maxWaitTime = 3000; // 最多等待3秒
+        const checkInterval = 200; // 每200ms检查一次
+        const maxChecks = maxWaitTime / checkInterval;
         
-        // 查找确认弹窗中的"继续"按钮
-        const confirmButton = this.findSellConfirmButton();
-        
-        if (confirmButton) {
-            this.log('发现卖出确认弹窗，点击继续', 'info');
-            confirmButton.click();
-            await this.sleep(1000);
-            this.log('确认卖出订单', 'success');
-        } else {
-            this.log('未发现卖出确认弹窗，继续执行', 'info');
+        for (let i = 0; i < maxChecks; i++) {
+            await this.sleep(checkInterval);
+            
+            const confirmButton = this.findSellConfirmButton();
+            if (confirmButton) {
+                this.log('✅ 发现卖出确认弹窗', 'success');
+                confirmButton.click();
+                await this.sleep(300);
+                this.log('✅ 确认卖出订单', 'success');
+                return true;
+            }
+            
+            this.log(`等待弹窗... (${i + 1}/${maxChecks})`, 'info');
         }
+        
+        this.log('❌ 等待超时，未发现卖出确认弹窗', 'error');
+        return false;
     }
 
     findSellConfirmButton() {
@@ -1131,7 +1295,7 @@ class BinanceAutoTrader {
 
         return new Promise((resolve, reject) => {
             let checkCount = 0;
-            const maxChecks = 120; // 最多检查2分钟
+            const maxChecks = 200; // 增加检查次数
             
             this.orderCheckInterval = setInterval(async () => {
                 checkCount++;
@@ -1158,7 +1322,7 @@ class BinanceAutoTrader {
                 } catch (error) {
                     this.log(`检查卖出状态出错: ${error.message}`, 'error');
                 }
-            }, 1000);
+            }, 300); // 减少检查间隔到300ms
         });
     }
 
@@ -1167,8 +1331,14 @@ class BinanceAutoTrader {
         const hasActiveSellOrder = await this.checkActiveSellOrder();
         
         if (!hasActiveSellOrder) {
-            // 如果没有活跃的卖出委托，说明订单已经完成
-            this.log('卖出委托记录已消失，订单完成', 'success');
+            // 检查是否还有代币余额（双重验证）
+            const stillHasTokens = await this.checkTokenBalance();
+            if (stillHasTokens) {
+                this.log('委托记录消失但仍有代币余额，卖出可能未成功', 'error');
+                return false;
+            }
+            
+            this.log('卖出委托记录已消失且无代币余额，订单完成', 'success');
             return true;
         } else {
             // 如果还有活跃的卖出委托，说明订单还在进行中
