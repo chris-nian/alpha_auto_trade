@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "币安Alpha自动交易助手",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "币安Alpha交易页面自动买卖策略执行工具",
   "permissions": [
     "activeTab",

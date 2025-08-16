@@ -321,8 +321,8 @@ class BinanceAutoTrader {
         this.log('开始切换到买入选项卡', 'info');
         this.debugTabState();
         
-        // 精确查找买入选项卡
-        const buyTab = document.querySelector('#bn-tab-0') ||
+        // 精确查找买入选项卡 - 必须同时包含ID和正确的类名
+        const buyTab = document.querySelector('#bn-tab-0.bn-tab__buySell') ||
                       document.querySelector('.bn-tab__buySell[aria-controls="bn-tab-pane-0"]') ||
                       document.querySelector('.bn-tab__buySell:first-child');
         
@@ -351,7 +351,7 @@ class BinanceAutoTrader {
     }
 
     isBuyTabActive() {
-        const buyTab = document.querySelector('#bn-tab-0');
+        const buyTab = document.querySelector('#bn-tab-0.bn-tab__buySell');
         if (!buyTab) return false;
         
         return buyTab.getAttribute('aria-selected') === 'true' && 
@@ -370,7 +370,7 @@ class BinanceAutoTrader {
             // 如果切换失败，再次尝试点击
             if (i < maxAttempts - 1) {
                 this.log(`买入选项卡切换中... (${i + 1}/${maxAttempts})`, 'info');
-                const buyTab = document.querySelector('#bn-tab-0');
+                const buyTab = document.querySelector('#bn-tab-0.bn-tab__buySell');
                 if (buyTab) {
                     buyTab.click();
                 }
@@ -708,8 +708,8 @@ class BinanceAutoTrader {
         this.log('开始切换到卖出选项卡', 'info');
         this.debugTabState();
         
-        // 精确查找卖出选项卡
-        const sellTab = document.querySelector('#bn-tab-1') ||
+        // 精确查找卖出选项卡 - 必须同时包含ID和正确的类名
+        const sellTab = document.querySelector('#bn-tab-1.bn-tab__buySell') ||
                        document.querySelector('.bn-tab__buySell[aria-controls="bn-tab-pane-1"]') ||
                        document.querySelector('.bn-tab__buySell:nth-child(2)');
         
@@ -738,7 +738,7 @@ class BinanceAutoTrader {
     }
 
     isSellTabActive() {
-        const sellTab = document.querySelector('#bn-tab-1');
+        const sellTab = document.querySelector('#bn-tab-1.bn-tab__buySell');
         if (!sellTab) return false;
         
         return sellTab.getAttribute('aria-selected') === 'true' && 
@@ -757,7 +757,7 @@ class BinanceAutoTrader {
             // 如果切换失败，再次尝试点击
             if (i < maxAttempts - 1) {
                 this.log(`卖出选项卡切换中... (${i + 1}/${maxAttempts})`, 'info');
-                const sellTab = document.querySelector('#bn-tab-1');
+                const sellTab = document.querySelector('#bn-tab-1.bn-tab__buySell');
                 if (sellTab) {
                     sellTab.click();
                 }
@@ -769,15 +769,15 @@ class BinanceAutoTrader {
     }
 
     debugTabState() {
-        const buyTab = document.querySelector('#bn-tab-0');
-        const sellTab = document.querySelector('#bn-tab-1');
+        const buyTab = document.querySelector('#bn-tab-0.bn-tab__buySell');
+        const sellTab = document.querySelector('#bn-tab-1.bn-tab__buySell');
         
         if (buyTab) {
             const buySelected = buyTab.getAttribute('aria-selected');
             const buyActive = buyTab.classList.contains('active');
             this.log(`买入选项卡状态: aria-selected=${buySelected}, active=${buyActive}`, 'info');
         } else {
-            this.log('未找到买入选项卡元素', 'error');
+            this.log('未找到买入选项卡元素 (#bn-tab-0.bn-tab__buySell)', 'error');
         }
         
         if (sellTab) {
@@ -785,7 +785,7 @@ class BinanceAutoTrader {
             const sellActive = sellTab.classList.contains('active');
             this.log(`卖出选项卡状态: aria-selected=${sellSelected}, active=${sellActive}`, 'info');
         } else {
-            this.log('未找到卖出选项卡元素', 'error');
+            this.log('未找到卖出选项卡元素 (#bn-tab-1.bn-tab__buySell)', 'error');
         }
     }
 
@@ -993,13 +993,20 @@ class BinanceAutoTrader {
             
             // 查找买入选项卡元素
             this.log('2. 查找买入选项卡元素:', 'info');
-            const buyTab1 = document.querySelector('#bn-tab-0');
+            const buyTab1 = document.querySelector('#bn-tab-0.bn-tab__buySell');
             const buyTab2 = document.querySelector('.bn-tab__buySell[aria-controls="bn-tab-pane-0"]');
             const buyTab3 = document.querySelector('.bn-tab__buySell:first-child');
+            const buyTab4 = document.querySelectorAll('#bn-tab-0');
             
-            this.log(`  #bn-tab-0: ${buyTab1 ? '找到' : '未找到'}`, 'info');
+            this.log(`  #bn-tab-0.bn-tab__buySell: ${buyTab1 ? '找到' : '未找到'}`, 'info');
             this.log(`  .bn-tab__buySell[aria-controls="bn-tab-pane-0"]: ${buyTab2 ? '找到' : '未找到'}`, 'info');
             this.log(`  .bn-tab__buySell:first-child: ${buyTab3 ? '找到' : '未找到'}`, 'info');
+            this.log(`  所有#bn-tab-0元素数量: ${buyTab4.length}`, 'info');
+            
+            // 输出所有#bn-tab-0元素的详细信息
+            buyTab4.forEach((el, index) => {
+                this.log(`    元素${index + 1}: 文本="${el.textContent.trim()}", 类名="${el.className}"`, 'info');
+            });
             
             const buyTab = buyTab1 || buyTab2 || buyTab3;
             
@@ -1060,13 +1067,20 @@ class BinanceAutoTrader {
             
             // 查找卖出选项卡元素
             this.log('2. 查找卖出选项卡元素:', 'info');
-            const sellTab1 = document.querySelector('#bn-tab-1');
+            const sellTab1 = document.querySelector('#bn-tab-1.bn-tab__buySell');
             const sellTab2 = document.querySelector('.bn-tab__buySell[aria-controls="bn-tab-pane-1"]');
             const sellTab3 = document.querySelector('.bn-tab__buySell:nth-child(2)');
+            const sellTab4 = document.querySelectorAll('#bn-tab-1');
             
-            this.log(`  #bn-tab-1: ${sellTab1 ? '找到' : '未找到'}`, 'info');
+            this.log(`  #bn-tab-1.bn-tab__buySell: ${sellTab1 ? '找到' : '未找到'}`, 'info');
             this.log(`  .bn-tab__buySell[aria-controls="bn-tab-pane-1"]: ${sellTab2 ? '找到' : '未找到'}`, 'info');
             this.log(`  .bn-tab__buySell:nth-child(2): ${sellTab3 ? '找到' : '未找到'}`, 'info');
+            this.log(`  所有#bn-tab-1元素数量: ${sellTab4.length}`, 'info');
+            
+            // 输出所有#bn-tab-1元素的详细信息
+            sellTab4.forEach((el, index) => {
+                this.log(`    元素${index + 1}: 文本="${el.textContent.trim()}", 类名="${el.className}"`, 'info');
+            });
             
             const sellTab = sellTab1 || sellTab2 || sellTab3;
             
