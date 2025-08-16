@@ -142,13 +142,29 @@
     transform: translateY(-1px);
 }
 
+#binance-auto-trader .debug-btn {
+    background: #6c757d;
+    color: #fff;
+    font-size: 11px;
+    padding: 6px 10px;
+}
+
+#binance-auto-trader .debug-btn:hover {
+    background: #5a6268;
+    transform: translateY(-1px);
+}
+
 #binance-auto-trader .log-container {
-    max-height: 120px;
+    max-height: 200px;
     overflow-y: auto;
     background: #1a1a1a;
     border-radius: 6px;
     padding: 8px;
     border: 1px solid #333;
+    user-select: text;
+    -webkit-user-select: text;
+    -moz-user-select: text;
+    -ms-user-select: text;
 }
 
 #binance-auto-trader .log-item {
@@ -156,6 +172,11 @@
     color: #aaa;
     margin-bottom: 2px;
     line-height: 1.2;
+    user-select: text;
+    -webkit-user-select: text;
+    -moz-user-select: text;
+    -ms-user-select: text;
+    cursor: text;
 }
 
 #binance-auto-trader .log-item:last-child {
