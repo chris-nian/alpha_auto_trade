@@ -61,6 +61,22 @@
         .stop-btn:hover {
             background: #e03e54;
         }
+        .emergency-btn {
+            background: linear-gradient(135deg, #ff4757 0%, #ff3742 100%);
+            color: #fff;
+            font-weight: 600;
+            border: 2px solid #ff4757;
+            margin-top: 8px;
+            animation: pulse 2s infinite;
+        }
+        .emergency-btn:hover {
+            background: linear-gradient(135deg, #ff3742 0%, #ff2d38 100%);
+        }
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(255, 71, 87, 0.7); }
+            70% { box-shadow: 0 0 0 10px rgba(255, 71, 87, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(255, 71, 87, 0); }
+        }
         .status {
             padding: 10px;
             border-radius: 4px;
@@ -87,8 +103,14 @@
             <input type="number" id="amount" placeholder="输入交易金额" step="0.1" min="0.1">
         </div>
         
+        <div class="input-group">
+            <label for="tradeCount">交易次数限制:</label>
+            <input type="number" id="tradeCount" placeholder="输入次数(0=无限制)" step="1" min="0" value="0">
+        </div>
+        
         <button id="startBtn" class="button start-btn">开始自动交易</button>
         <button id="stopBtn" class="button stop-btn" style="display: none;">停止交易</button>
+        <button id="emergencyBtn" class="button emergency-btn">🛑 紧急停止</button>
         
         <div id="status" class="status">未连接</div>
         

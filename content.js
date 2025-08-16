@@ -5,9 +5,14 @@ class BinanceAutoTrader {
         this.ui = null;
         this.logContainer = null;
         this.statusDisplay = null;
+        this.tradeCounter = null;
         this.currentState = 'idle'; // idle, buying, monitoring_buy, selling, monitoring_sell
         this.orderCheckInterval = null;
         this.dragOffset = { x: 0, y: 0 };
+        
+        // 交易次数控制
+        this.maxTradeCount = 0; // 最大交易次数，0表示无限制
+        this.currentTradeCount = 0; // 当前交易次数
         
         this.init();
     }
@@ -31,10 +36,18 @@ class BinanceAutoTrader {
                     <label for="trade-amount">交易金额 (USDT):</label>
                     <input type="number" id="trade-amount" placeholder="输入金额" step="0.1" min="0.1">
                 </div>
+                <div class="input-row">
+                    <label for="trade-count">交易次数限制:</label>
+                    <input type="number" id="trade-count" placeholder="输入次数(0=无限制)" step="1" min="0" value="0">
+                </div>
                 <div class="status-display" id="status-display">等待开始</div>
+                <div class="trade-counter" id="trade-counter">交易次数: 0/0</div>
                 <div class="control-buttons">
                     <button class="control-btn start-btn" id="start-btn">开始交易</button>
                     <button class="control-btn stop-btn" id="stop-btn" style="display: none;">停止交易</button>
+                </div>
+                <div class="emergency-container">
+                    <button class="control-btn emergency-btn" id="emergency-btn">🛑 紧急停止</button>
                 </div>
                 <div class="debug-buttons" style="margin-top: 8px;">
                     <button class="control-btn debug-btn" id="switch-buy-btn">切换到买入</button>
@@ -48,6 +61,7 @@ class BinanceAutoTrader {
         document.body.appendChild(this.ui);
         this.logContainer = document.getElementById('log-container');
         this.statusDisplay = document.getElementById('status-display');
+        this.tradeCounter = document.getElementById('trade-counter');
 
         this.setupUIEvents();
         this.makeDraggable();
@@ -56,6 +70,7 @@ class BinanceAutoTrader {
     setupUIEvents() {
         const startBtn = document.getElementById('start-btn');
         const stopBtn = document.getElementById('stop-btn');
+        const emergencyBtn = document.getElementById('emergency-btn');
         const minimizeBtn = document.getElementById('minimize-btn');
         const switchBuyBtn = document.getElementById('switch-buy-btn');
         const switchSellBtn = document.getElementById('switch-sell-btn');
@@ -63,6 +78,7 @@ class BinanceAutoTrader {
 
         startBtn.addEventListener('click', () => this.startTrading());
         stopBtn.addEventListener('click', () => this.stopTrading());
+        emergencyBtn.addEventListener('click', () => this.emergencyStop());
         minimizeBtn.addEventListener('click', () => this.toggleMinimize());
         switchBuyBtn.addEventListener('click', () => this.debugSwitchToBuy());
         switchSellBtn.addEventListener('click', () => this.debugSwitchToSell());
@@ -108,9 +124,16 @@ class BinanceAutoTrader {
             if (message.action === 'start') {
                 this.currentAmount = message.amount;
                 document.getElementById('trade-amount').value = message.amount;
+                
+                if (message.tradeCount !== undefined) {
+                    document.getElementById('trade-count').value = message.tradeCount;
+                }
+                
                 this.startTrading();
             } else if (message.action === 'stop') {
                 this.stopTrading();
+            } else if (message.action === 'emergency_stop') {
+                this.emergencyStop();
             }
         });
     }
@@ -124,6 +147,8 @@ class BinanceAutoTrader {
             return;
         }
 
+        const tradeCount = parseInt(document.getElementById('trade-count').value) || 0;
+        
         // 安全检查
         if (!this.performSafetyChecks()) {
             return;
@@ -131,8 +156,16 @@ class BinanceAutoTrader {
 
         this.isRunning = true;
         this.currentAmount = amount;
+        this.maxTradeCount = tradeCount;
+        this.currentTradeCount = 0;
         this.updateUI();
-        this.log(`开始自动交易，金额: ${amount} USDT`, 'info');
+        this.updateTradeCounter();
+        
+        if (tradeCount > 0) {
+            this.log(`开始自动交易，金额: ${amount} USDT，限制次数: ${tradeCount}`, 'info');
+        } else {
+            this.log(`开始自动交易，金额: ${amount} USDT，无次数限制`, 'info');
+        }
         
         try {
             await this.runTradingLoop();
@@ -183,8 +216,157 @@ class BinanceAutoTrader {
             this.orderCheckInterval = null;
         }
         
+        // 重置交易次数计数器
+        this.currentTradeCount = 0;
+        this.maxTradeCount = 0;
+        
         this.updateUI();
+        this.updateTradeCounter();
         this.log('交易已停止', 'info');
+    }
+
+    async emergencyStop() {
+        this.log('执行紧急停止...', 'error');
+        
+        // 1. 立即停止所有交易活动
+        this.isRunning = false;
+        this.currentState = 'emergency_stop';
+        
+        if (this.orderCheckInterval) {
+            clearInterval(this.orderCheckInterval);
+            this.orderCheckInterval = null;
+        }
+        
+        try {
+            // 2. 切换到卖出标签
+            await this.emergencySwitchToSell();
+            
+            // 3. 卖出所有当前代币
+            await this.emergencySellAll();
+            
+            this.log('紧急停止完成', 'success');
+        } catch (error) {
+            this.log(`紧急停止过程出错: ${error.message}`, 'error');
+        }
+        
+        this.updateUI();
+    }
+
+    async emergencySwitchToSell() {
+        this.log('紧急切换到卖出标签...', 'info');
+        
+        try {
+            await this.switchToSellTab();
+            this.log('成功切换到卖出标签', 'success');
+        } catch (error) {
+            this.log(`切换到卖出标签失败: ${error.message}`, 'error');
+            throw error;
+        }
+    }
+
+    async emergencySellAll() {
+        this.log('开始紧急卖出所有代币...', 'info');
+        
+        try {
+            // 检查是否有代币余额
+            const hasTokens = await this.checkTokenBalance();
+            if (!hasTokens) {
+                this.log('未检测到代币余额，无需卖出', 'info');
+                return;
+            }
+            
+            // 设置最大数量
+            await this.setMaxQuantity();
+            
+            // 点击卖出按钮
+            await this.clickSellButton();
+            
+            this.log('紧急卖出订单已提交', 'success');
+            
+            // 等待卖出完成
+            await this.waitForSellComplete();
+            
+            this.log('紧急卖出完成', 'success');
+        } catch (error) {
+            this.log(`紧急卖出失败: ${error.message}`, 'error');
+            throw error;
+        }
+    }
+
+    async autoStopAndSellAll() {
+        this.log('=== 自动停止并安全卖出 ===', 'error');
+        
+        // 1. 立即停止所有交易活动
+        this.isRunning = false;
+        this.currentState = 'auto_stop';
+        
+        if (this.orderCheckInterval) {
+            clearInterval(this.orderCheckInterval);
+            this.orderCheckInterval = null;
+        }
+        
+        try {
+            // 2. 强制切换到卖出标签
+            this.log('强制切换到卖出标签...', 'info');
+            await this.switchToSellTab();
+            
+            // 3. 检查并卖出所有当前代币
+            this.log('检查代币余额并执行安全卖出...', 'info');
+            await this.safeSellAllTokens();
+            
+            this.log('=== 自动停止完成，所有代币已安全卖出 ===', 'success');
+        } catch (error) {
+            this.log(`自动停止过程出错: ${error.message}`, 'error');
+            this.log('为确保安全，请手动检查并卖出剩余代币', 'error');
+        }
+        
+        this.updateUI();
+    }
+
+    async safeSellAllTokens() {
+        this.log('开始安全卖出所有代币...', 'info');
+        
+        try {
+            // 多次检查代币余额，确保准确性
+            let hasTokens = false;
+            for (let i = 0; i < 3; i++) {
+                hasTokens = await this.checkTokenBalance();
+                if (hasTokens) break;
+                await this.sleep(1000);
+            }
+            
+            if (!hasTokens) {
+                this.log('✅ 确认无代币余额，无需卖出', 'success');
+                return;
+            }
+            
+            this.log('检测到代币余额，开始卖出...', 'info');
+            
+            // 设置最大数量
+            await this.setMaxQuantity();
+            
+            // 点击卖出按钮
+            await this.clickSellButton();
+            
+            this.log('安全卖出订单已提交', 'success');
+            
+            // 等待卖出完成
+            await this.waitForSellComplete();
+            
+            // 再次确认卖出完成
+            await this.sleep(2000);
+            const stillHasTokens = await this.checkTokenBalance();
+            if (stillHasTokens) {
+                this.log('⚠️ 警告：可能还有剩余代币，请手动检查', 'error');
+            } else {
+                this.log('✅ 所有代币已成功卖出', 'success');
+            }
+            
+        } catch (error) {
+            this.log(`安全卖出失败: ${error.message}`, 'error');
+            this.log('⚠️ 请立即手动卖出所有代币以避免损失', 'error');
+            throw error;
+        }
     }
 
     updateUI() {
@@ -201,6 +383,25 @@ class BinanceAutoTrader {
             stopBtn.style.display = 'none';
             this.statusDisplay.textContent = '等待开始';
             this.statusDisplay.className = 'status-display';
+        }
+    }
+
+    updateTradeCounter() {
+        if (this.maxTradeCount > 0) {
+            this.tradeCounter.textContent = `交易次数: ${this.currentTradeCount}/${this.maxTradeCount}`;
+            
+            // 根据进度改变颜色
+            const progress = this.currentTradeCount / this.maxTradeCount;
+            if (progress >= 0.8) {
+                this.tradeCounter.className = 'trade-counter warning';
+            } else if (progress >= 0.5) {
+                this.tradeCounter.className = 'trade-counter info';
+            } else {
+                this.tradeCounter.className = 'trade-counter';
+            }
+        } else {
+            this.tradeCounter.textContent = `交易次数: ${this.currentTradeCount}/无限制`;
+            this.tradeCounter.className = 'trade-counter';
         }
     }
 
@@ -241,7 +442,29 @@ class BinanceAutoTrader {
                 if (!this.isRunning) break;
 
                 consecutiveErrors = 0; // 重置错误计数
-                this.log('一轮交易完成，开始下一轮', 'success');
+                this.currentTradeCount++; // 增加交易次数
+                this.updateTradeCounter(); // 更新交易次数显示
+                
+                this.log(`第 ${this.currentTradeCount} 轮交易完成`, 'success');
+                
+                // 检查是否达到交易次数限制
+                if (this.maxTradeCount > 0 && this.currentTradeCount >= this.maxTradeCount) {
+                    this.log(`⚠️ 已达到交易次数限制 (${this.maxTradeCount})，自动停止并执行安全卖出`, 'error');
+                    await this.autoStopAndSellAll();
+                    break;
+                }
+                
+                // 提前警告功能
+                if (this.maxTradeCount > 0) {
+                    const remaining = this.maxTradeCount - this.currentTradeCount;
+                    if (remaining <= 2 && remaining > 0) {
+                        this.log(`⚠️ 警告：还剩 ${remaining} 次交易后将自动停止`, 'error');
+                    } else if (remaining <= 5 && remaining > 2) {
+                        this.log(`⚠️ 提醒：还剩 ${remaining} 次交易后将自动停止`, 'info');
+                    }
+                }
+                
+                this.log('等待下一轮交易...', 'info');
                 await this.sleep(2000); // 等待2秒后开始下一轮
 
             } catch (error) {
