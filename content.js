@@ -79,11 +79,9 @@ class BinanceAutoTrader {
                     <button class="control-btn stop-btn" id="stop-btn" style="display: none;">停止交易</button>
                 </div>
                 <div class="emergency-container">
-                    <button class="control-btn emergency-btn" id="emergency-btn">🛑 紧急停止</button>
+                    <button class="control-btn emergency-btn" id="emergency-btn">安全停止交易</button>
                 </div>
                 <div class="debug-buttons" style="margin-top: 8px;">
-                    <button class="control-btn debug-btn" id="switch-buy-btn">切换到买入</button>
-                    <button class="control-btn debug-btn" id="switch-sell-btn">切换到卖出</button>
                     <button class="control-btn debug-btn" id="clear-log-btn">清空日志</button>
                 </div>
                 <div class="log-container" id="log-container"></div>
@@ -104,16 +102,12 @@ class BinanceAutoTrader {
         const stopBtn = document.getElementById('stop-btn');
         const emergencyBtn = document.getElementById('emergency-btn');
         const minimizeBtn = document.getElementById('minimize-btn');
-        const switchBuyBtn = document.getElementById('switch-buy-btn');
-        const switchSellBtn = document.getElementById('switch-sell-btn');
         const clearLogBtn = document.getElementById('clear-log-btn');
 
         startBtn.addEventListener('click', () => this.startTrading());
         stopBtn.addEventListener('click', () => this.stopTrading());
         emergencyBtn.addEventListener('click', () => this.emergencyStop());
         minimizeBtn.addEventListener('click', () => this.toggleMinimize());
-        switchBuyBtn.addEventListener('click', () => this.debugSwitchToBuy());
-        switchSellBtn.addEventListener('click', () => this.debugSwitchToSell());
         clearLogBtn.addEventListener('click', () => this.clearLogs());
     }
 
@@ -1307,153 +1301,6 @@ class BinanceAutoTrader {
         return false;
     }
 
-    async debugSwitchToBuy() {
-        this.log('=== 调试：开始切换到买入选项卡 ===', 'info');
-        
-        try {
-            // 输出初始状态
-            this.log('1. 检查初始状态:', 'info');
-            this.debugTabState();
-            
-            // 查找买入选项卡元素
-            this.log('2. 查找买入选项卡元素:', 'info');
-            const buyTab1 = document.querySelector('#bn-tab-0.bn-tab__buySell');
-            const buyTab2 = document.querySelector('.bn-tab__buySell[aria-controls="bn-tab-pane-0"]');
-            const buyTab3 = document.querySelector('.bn-tab__buySell:first-child');
-            const buyTab4 = document.querySelectorAll('#bn-tab-0');
-            
-            this.log(`  #bn-tab-0.bn-tab__buySell: ${buyTab1 ? '找到' : '未找到'}`, 'info');
-            this.log(`  .bn-tab__buySell[aria-controls="bn-tab-pane-0"]: ${buyTab2 ? '找到' : '未找到'}`, 'info');
-            this.log(`  .bn-tab__buySell:first-child: ${buyTab3 ? '找到' : '未找到'}`, 'info');
-            this.log(`  所有#bn-tab-0元素数量: ${buyTab4.length}`, 'info');
-            
-            // 输出所有#bn-tab-0元素的详细信息
-            buyTab4.forEach((el, index) => {
-                this.log(`    元素${index + 1}: 文本="${el.textContent.trim()}", 类名="${el.className}"`, 'info');
-            });
-            
-            const buyTab = buyTab1 || buyTab2 || buyTab3;
-            
-            if (!buyTab) {
-                this.log('❌ 未找到任何买入选项卡元素', 'error');
-                return;
-            }
-            
-            this.log(`✅ 使用元素: ${buyTab.id || buyTab.className}`, 'success');
-            this.log(`  元素文本: "${buyTab.textContent.trim()}"`, 'info');
-            this.log(`  aria-selected: ${buyTab.getAttribute('aria-selected')}`, 'info');
-            this.log(`  aria-controls: ${buyTab.getAttribute('aria-controls')}`, 'info');
-            this.log(`  classList: ${Array.from(buyTab.classList).join(', ')}`, 'info');
-            
-            // 检查是否已经激活
-            this.log('3. 检查是否已经激活:', 'info');
-            const isActive = this.isBuyTabActive();
-            this.log(`  当前状态: ${isActive ? '已激活' : '未激活'}`, isActive ? 'success' : 'info');
-            
-            if (isActive) {
-                this.log('✅ 已在买入选项卡，无需切换', 'success');
-                return;
-            }
-            
-            // 执行点击
-            this.log('4. 执行点击操作:', 'info');
-            buyTab.click();
-            this.log('  已点击买入选项卡', 'info');
-            
-            // 等待切换结果
-            this.log('5. 验证切换结果:', 'info');
-            const switchSuccess = await this.waitForBuyTabSwitch();
-            
-            if (switchSuccess) {
-                this.log('✅ 买入选项卡切换成功', 'success');
-            } else {
-                this.log('❌ 买入选项卡切换失败', 'error');
-            }
-            
-            // 输出最终状态
-            this.log('6. 最终状态:', 'info');
-            this.debugTabState();
-            
-        } catch (error) {
-            this.log(`❌ 调试过程出错: ${error.message}`, 'error');
-        }
-        
-        this.log('=== 调试：买入切换完成 ===', 'info');
-    }
-
-    async debugSwitchToSell() {
-        this.log('=== 调试：开始切换到卖出选项卡 ===', 'info');
-        
-        try {
-            // 输出初始状态
-            this.log('1. 检查初始状态:', 'info');
-            this.debugTabState();
-            
-            // 查找卖出选项卡元素
-            this.log('2. 查找卖出选项卡元素:', 'info');
-            const sellTab1 = document.querySelector('#bn-tab-1.bn-tab__buySell');
-            const sellTab2 = document.querySelector('.bn-tab__buySell[aria-controls="bn-tab-pane-1"]');
-            const sellTab3 = document.querySelector('.bn-tab__buySell:nth-child(2)');
-            const sellTab4 = document.querySelectorAll('#bn-tab-1');
-            
-            this.log(`  #bn-tab-1.bn-tab__buySell: ${sellTab1 ? '找到' : '未找到'}`, 'info');
-            this.log(`  .bn-tab__buySell[aria-controls="bn-tab-pane-1"]: ${sellTab2 ? '找到' : '未找到'}`, 'info');
-            this.log(`  .bn-tab__buySell:nth-child(2): ${sellTab3 ? '找到' : '未找到'}`, 'info');
-            this.log(`  所有#bn-tab-1元素数量: ${sellTab4.length}`, 'info');
-            
-            // 输出所有#bn-tab-1元素的详细信息
-            sellTab4.forEach((el, index) => {
-                this.log(`    元素${index + 1}: 文本="${el.textContent.trim()}", 类名="${el.className}"`, 'info');
-            });
-            
-            const sellTab = sellTab1 || sellTab2 || sellTab3;
-            
-            if (!sellTab) {
-                this.log('❌ 未找到任何卖出选项卡元素', 'error');
-                return;
-            }
-            
-            this.log(`✅ 使用元素: ${sellTab.id || sellTab.className}`, 'success');
-            this.log(`  元素文本: "${sellTab.textContent.trim()}"`, 'info');
-            this.log(`  aria-selected: ${sellTab.getAttribute('aria-selected')}`, 'info');
-            this.log(`  aria-controls: ${sellTab.getAttribute('aria-controls')}`, 'info');
-            this.log(`  classList: ${Array.from(sellTab.classList).join(', ')}`, 'info');
-            
-            // 检查是否已经激活
-            this.log('3. 检查是否已经激活:', 'info');
-            const isActive = this.isSellTabActive();
-            this.log(`  当前状态: ${isActive ? '已激活' : '未激活'}`, isActive ? 'success' : 'info');
-            
-            if (isActive) {
-                this.log('✅ 已在卖出选项卡，无需切换', 'success');
-                return;
-            }
-            
-            // 执行点击
-            this.log('4. 执行点击操作:', 'info');
-            sellTab.click();
-            this.log('  已点击卖出选项卡', 'info');
-            
-            // 等待切换结果
-            this.log('5. 验证切换结果:', 'info');
-            const switchSuccess = await this.waitForSellTabSwitch();
-            
-            if (switchSuccess) {
-                this.log('✅ 卖出选项卡切换成功', 'success');
-            } else {
-                this.log('❌ 卖出选项卡切换失败', 'error');
-            }
-            
-            // 输出最终状态
-            this.log('6. 最终状态:', 'info');
-            this.debugTabState();
-            
-        } catch (error) {
-            this.log(`❌ 调试过程出错: ${error.message}`, 'error');
-        }
-        
-        this.log('=== 调试：卖出切换完成 ===', 'info');
-    }
 
     clearLogs() {
         this.logContainer.innerHTML = '';
@@ -1469,8 +1316,8 @@ class BinanceAutoTrader {
         this.logContainer.appendChild(logItem);
         this.logContainer.scrollTop = this.logContainer.scrollHeight;
 
-        // 保持最多50条日志
-        if (this.logContainer.children.length > 50) {
+        // 保持最多200条日志
+        if (this.logContainer.children.length > 200) {
             this.logContainer.removeChild(this.logContainer.firstChild);
         }
 
