@@ -674,178 +674,80 @@ class BinanceAutoTrader {
         await this.sleep(300); // 减少到300ms
         this.log('点击买入按钮', 'success');
 
-        // 检查并处理确认弹窗（必须成功）
-        try {
-            await this.handleBuyConfirmationDialog();
-        } catch (error) {
-            throw new Error(`买入确认失败: ${error.message}`);
-        }
-
-        // 立即验证弹窗点击后的状态
-        await this.sleep(500); // 等待500ms让订单状态更新
-        
-        // 检查是否有错误提示或订单是否成功提交
-        if (await this.checkForBuyOrderError()) {
-            throw new Error('买入订单提交后出现错误');
-        }
-        
-        this.log('买入订单提交验证通过', 'success');
+        // 检查并处理确认弹窗
+        await this.handleBuyConfirmationDialog();
     }
 
     async handleBuyConfirmationDialog() {
-        this.log('等待买入确认弹窗出现...', 'info');
+        this.log('检查买入确认弹窗...', 'info');
         
-        const maxWaitTime = 5000; // 最多等待5秒
-        const checkInterval = 200; // 每200ms检查一次
-        const maxChecks = maxWaitTime / checkInterval;
+        // 等待弹窗出现
+        await this.sleep(200);
         
-        for (let i = 0; i < maxChecks; i++) {
-            await this.sleep(checkInterval);
-            
-            const confirmButton = this.findBuyConfirmButton();
-            if (confirmButton) {
-                this.log('✅ 发现买入确认弹窗，点击继续', 'success');
-                confirmButton.click();
-                await this.sleep(300);
-                this.log('✅ 确认买入订单成功', 'success');
-                return true; // 成功处理弹窗
-            }
-            
-            this.log(`等待弹窗... (${i + 1}/${maxChecks})`, 'info');
-        }
+        // 查找确认弹窗中的"继续"按钮
+        const confirmButton = this.findBuyConfirmButton();
         
-        // 如果没有找到弹窗，再次检查是否有订单提交成功的迹象
-        this.log('⚠️ 超时未发现买入确认弹窗，检查是否直接提交成功...', 'error');
-        
-        // 等待一段时间看看是否有委托订单出现
-        await this.sleep(1000);
-        const hasNewBuyOrder = await this.checkActiveBuyOrder();
-        
-        if (hasNewBuyOrder) {
-            this.log('✅ 发现新的买入委托，订单可能直接提交成功', 'success');
-            return true;
+        if (confirmButton) {
+            this.log('发现买入确认弹窗，点击继续', 'info');
+            confirmButton.click();
+            await this.sleep(300);
+            this.log('确认买入订单', 'success');
         } else {
-            this.log('❌ 既没有确认弹窗也没有委托订单，买入失败', 'error');
-            throw new Error('买入确认弹窗未出现且无委托订单，买入失败');
+            this.log('未发现买入确认弹窗，继续执行', 'info');
         }
     }
 
     findBuyConfirmButton() {
-        // 方法1: 查找模态框或弹窗容器中的继续按钮
-        const modalSelectors = [
-            '[role="dialog"]',
-            '.bn-modal',
-            '[class*="modal"]',
-            '[class*="popup"]',
-            '[class*="dialog"]'
-        ];
-        
-        for (const selector of modalSelectors) {
-            const modal = document.querySelector(selector);
-            if (modal && modal.offsetParent !== null) { // 确保模态框可见
-                // 检查是否包含买入相关信息
-                if (modal.textContent.includes('买入') || modal.textContent.includes('限价')) {
-                    const continueBtn = modal.querySelector('button[class*="primary"]') ||
-                                       Array.from(modal.querySelectorAll('button')).find(btn => 
-                                           btn.textContent.includes('继续') && !btn.disabled
-                                       );
-                    if (continueBtn) {
-                        this.log(`找到模态框中的继续按钮: "${continueBtn.textContent.trim()}"`, 'info');
-                        return continueBtn;
-                    }
-                }
-            }
-        }
-
-        // 方法2: 基于具体DOM结构查找 - 查找包含px-[24px] pb-[24px]的容器
+        // 方法1: 基于具体DOM结构查找 - 查找包含px-[24px] pb-[24px]的容器
         const confirmContainers = document.querySelectorAll('[class*="px-[24px]"][class*="pb-[24px]"]');
         for (const container of confirmContainers) {
-            // 检查是否包含买入相关信息且容器可见
-            if (container.offsetParent !== null && 
-                (container.textContent.includes('限价') && container.textContent.includes('买入'))) {
-                const button = container.querySelector('button.bn-button.bn-button__primary') ||
-                              container.querySelector('button[class*="primary"]');
-                if (button && button.textContent.includes('继续') && !button.disabled) {
-                    this.log(`找到确认容器中的继续按钮: "${button.textContent.trim()}"`, 'info');
+            // 检查是否包含买入相关信息
+            if (container.textContent.includes('限价') && container.textContent.includes('买入')) {
+                const button = container.querySelector('button.bn-button.bn-button__primary');
+                if (button && button.textContent.includes('继续')) {
                     return button;
                 }
             }
         }
 
-        // 方法3: 直接查找所有可见的"继续"按钮，优先选择主要按钮
-        const continueButtons = Array.from(document.querySelectorAll('button')).filter(btn => 
-            btn.textContent.includes('继续') && 
-            !btn.disabled && 
-            btn.offsetParent !== null // 确保按钮可见
+        // 方法2: 直接查找"继续"按钮
+        let confirmButton = Array.from(document.querySelectorAll('button')).find(btn => 
+            btn.textContent.trim() === '继续' && !btn.disabled
         );
-        
-        if (continueButtons.length > 0) {
-            // 优先选择主要按钮样式
-            const primaryButton = continueButtons.find(btn => 
-                btn.classList.contains('bn-button__primary') || 
-                btn.className.includes('primary')
-            );
-            const selectedButton = primaryButton || continueButtons[0];
-            this.log(`找到继续按钮: "${selectedButton.textContent.trim()}"`, 'info');
-            return selectedButton;
+
+        if (confirmButton) return confirmButton;
+
+        // 方法3: 查找确认弹窗中的主要按钮
+        confirmButton = document.querySelector('.bn-button__primary[class*="w-full"]') ||
+                       document.querySelector('button.bn-button.bn-button__primary[class*="w-full"]');
+
+        if (confirmButton && (confirmButton.textContent.includes('继续') || confirmButton.textContent.includes('确认'))) {
+            return confirmButton;
         }
 
-        // 方法4: 查找确认按钮（作为备用）
-        const confirmButtons = Array.from(document.querySelectorAll('button')).filter(btn => 
-            btn.textContent.includes('确认') && 
-            !btn.disabled && 
-            btn.offsetParent !== null
-        );
-        
-        if (confirmButtons.length > 0) {
-            const selectedButton = confirmButtons[0];
-            this.log(`找到确认按钮: "${selectedButton.textContent.trim()}"`, 'info');
-            return selectedButton;
+        // 方法4: 查找包含订单详情的弹窗
+        const orderDetailsElements = document.querySelectorAll('[class*="类型"], [class*="数量"], [class*="成交额"]');
+        for (const element of orderDetailsElements) {
+            const container = element.closest('[class*="px-[24px]"]');
+            if (container) {
+                const button = container.querySelector('button[class*="primary"]');
+                if (button && !button.disabled) {
+                    return button;
+                }
+            }
         }
 
-        this.log('未找到任何继续或确认按钮', 'error');
+        // 方法5: 模糊匹配 - 查找任何包含确认信息的按钮
+        const allButtons = document.querySelectorAll('button');
+        for (const button of allButtons) {
+            if ((button.textContent.includes('继续') || button.textContent.includes('确认')) && 
+                !button.disabled && 
+                button.offsetParent !== null) { // 确保按钮可见
+                return button;
+            }
+        }
+
         return null;
-    }
-
-    async checkForBuyOrderError() {
-        // 检查是否有错误提示信息
-        const errorSelectors = [
-            '.bn-message-error',
-            '.bn-toast-error',
-            '[class*="error"]',
-            '[class*="fail"]',
-            '.error-message',
-            '.toast-error'
-        ];
-        
-        for (const selector of errorSelectors) {
-            const errorElement = document.querySelector(selector);
-            if (errorElement && errorElement.offsetParent !== null) {
-                const errorText = errorElement.textContent.trim();
-                if (errorText && errorText.length > 0) {
-                    this.log(`发现错误提示: ${errorText}`, 'error');
-                    return true;
-                }
-            }
-        }
-        
-        // 检查是否有余额不足或其他常见错误提示
-        const errorKeywords = ['余额不足', '订单失败', '下单失败', '网络错误', 'insufficient', 'failed', 'error'];
-        const allElements = document.querySelectorAll('*');
-        
-        for (const element of allElements) {
-            if (element.offsetParent !== null) { // 确保元素可见
-                const text = element.textContent;
-                for (const keyword of errorKeywords) {
-                    if (text.includes(keyword)) {
-                        this.log(`发现错误关键词"${keyword}": ${text}`, 'error');
-                        return true;
-                    }
-                }
-            }
-        }
-        
-        return false; // 没有发现错误
     }
 
     async waitForBuyComplete() {
