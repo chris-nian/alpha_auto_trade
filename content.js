@@ -684,6 +684,21 @@ class BinanceAutoTrader {
         // 等待弹窗出现
         await this.sleep(200);
         
+        // 多次检测弹窗，提高检测成功率
+        let confirmButton = null;
+        let attempts = 0;
+        const maxAttempts = 5;
+        
+        while (attempts < maxAttempts && !confirmButton) {
+            confirmButton = this.findBuyConfirmButton();
+            if (!confirmButton) {
+                attempts++;
+                this.log(`等待弹窗出现... (${attempts}/${maxAttempts})`, 'info');
+                await this.sleep(100);
+            }
+        }
+
+
         // 查找确认弹窗中的"继续"按钮
         const confirmButton = this.findBuyConfirmButton();
         
