@@ -700,7 +700,7 @@ class BinanceAutoTrader {
 
 
         // 查找确认弹窗中的"继续"按钮
-        const confirmButton = this.findBuyConfirmButton();
+        confirmButton = this.findBuyConfirmButton();
         
         if (confirmButton) {
             this.log('发现买入确认弹窗，点击继续', 'info');
