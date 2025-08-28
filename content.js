@@ -303,8 +303,8 @@ class BinanceAutoTrader {
             
             this.log('紧急卖出订单已提交', 'success');
             
-            // 等待卖出完成
-            await this.waitForSellComplete();
+            // 等待卖出完成（使用重试逻辑确保紧急卖出成功）
+            await this.waitForSellCompleteWithRetry();
             
             this.log('紧急卖出完成', 'success');
         } catch (error) {
@@ -358,8 +358,8 @@ class BinanceAutoTrader {
             
             this.log('安全卖出订单已提交', 'success');
             
-            // 等待卖出完成
-            await this.waitForSellComplete();
+            // 等待卖出完成（使用重试逻辑确保安全卖出成功）
+            await this.waitForSellCompleteWithRetry();
             
             this.log('✅ 所有代币已成功卖出', 'success');
             
@@ -444,8 +444,8 @@ class BinanceAutoTrader {
                     continue;
                 }
 
-                // 步骤4: 等待卖出完成
-                await this.waitForSellComplete();
+                // 步骤4: 等待卖出完成（使用重试逻辑）
+                await this.waitForSellCompleteWithRetry();
                 if (!this.isRunning) break;
 
                 consecutiveErrors = 0; // 重置错误计数
@@ -1170,29 +1170,63 @@ class BinanceAutoTrader {
     }
 
     async waitForSellConfirmationDialog() {
-        this.log('等待卖出确认弹窗出现...', 'info');
+        this.log('检查卖出确认弹窗...', 'info');
         
-        const maxWaitTime = 3000; // 最多等待3秒
-        const checkInterval = 200; // 每200ms检查一次
-        const maxChecks = maxWaitTime / checkInterval;
+        // 等待弹窗出现
+        await this.sleep(200);
         
-        for (let i = 0; i < maxChecks; i++) {
-            await this.sleep(checkInterval);
+        // 多次检测弹窗，提高检测成功率（参考买入逻辑）
+        let confirmButton = null;
+        let attempts = 0;
+        const maxAttempts = 5;
+        
+        while (attempts < maxAttempts && !confirmButton) {
+            confirmButton = this.findSellConfirmButton();
+            if (!confirmButton) {
+                attempts++;
+                this.log(`等待卖出弹窗出现... (${attempts}/${maxAttempts})`, 'info');
+                await this.sleep(100);
+            }
+        }
+
+        // 查找确认弹窗中的"继续"按钮
+        confirmButton = this.findSellConfirmButton();
+        
+        if (confirmButton) {
+            this.log('发现卖出确认弹窗，点击继续', 'info');
             
-            const confirmButton = this.findSellConfirmButton();
-            if (confirmButton) {
-                this.log('✅ 发现卖出确认弹窗', 'success');
-                confirmButton.click();
-                await this.sleep(300);
-                this.log('✅ 确认卖出订单', 'success');
-                return true;
+            // 添加5次重试点击弹窗继续的逻辑，每次等待100ms（参考买入逻辑优化）
+            let clickSuccess = false;
+            for (let retry = 0; retry < 5; retry++) {
+                try {
+                    confirmButton.click();
+                    await this.sleep(100);
+                    
+                    // 检查弹窗是否已消失，表示点击成功
+                    const stillVisible = this.findSellConfirmButton();
+                    if (!stillVisible) {
+                        clickSuccess = true;
+                        this.log('确认卖出订单', 'success');
+                        return true;
+                    }
+                } catch (error) {
+                    this.log(`第${retry + 1}次点击确认按钮失败: ${error.message}`, 'error');
+                }
+                
+                if (retry < 4) { // 不是最后一次重试
+                    this.log(`第${retry + 1}次点击未成功，100ms后重试...`, 'info');
+                }
             }
             
-            this.log(`等待弹窗... (${i + 1}/${maxChecks})`, 'info');
+            if (!clickSuccess) {
+                this.log('❌ 5次重试点击确认按钮都失败', 'error');
+                return false;
+            }
+        } else {
+            this.log('未发现卖出确认弹窗，继续执行', 'info');
         }
         
-        this.log('❌ 等待超时，未发现卖出确认弹窗', 'error');
-        return false;
+        return true;
     }
 
     findSellConfirmButton() {
@@ -1236,6 +1270,92 @@ class BinanceAutoTrader {
         return null;
     }
 
+    async waitForSellCompleteWithRetry() {
+        this.currentState = 'monitoring_sell';
+        this.log('开始卖出订单监控（支持自动重试）...', 'info');
+        
+        const maxRetryAttempts = 10; // 最多重试10次
+        let retryCount = 0;
+        
+        while (retryCount < maxRetryAttempts && this.isRunning) {
+            try {
+                // 每次尝试等待1秒
+                const sellCompleted = await this.waitForSellCompleteOnce();
+                
+                if (sellCompleted) {
+                    this.log('卖出订单成功完成', 'success');
+                    return;
+                }
+                
+                // 如果1秒内没有完成，执行重试逻辑
+                retryCount++;
+                this.log(`卖出订单1秒内未完成，开始第${retryCount}次重试...`, 'info');
+                
+                // 取消所有当前委托
+                await this.cancelAllOrders();
+                
+                // 等待取消完成
+                await this.sleep(200);
+                
+                // 重新执行卖出（不包括切换标签，因为已经在卖出标签了）
+                await this.retrySellOrder();
+                
+            } catch (error) {
+                this.log(`卖出重试过程出错: ${error.message}`, 'error');
+                retryCount++;
+                
+                if (retryCount >= maxRetryAttempts) {
+                    throw new Error(`卖出重试达到最大次数(${maxRetryAttempts})，失败`);
+                }
+                
+                await this.sleep(500); // 出错后等待更久一点
+            }
+        }
+        
+        throw new Error('卖出订单重试失败');
+    }
+
+    async waitForSellCompleteOnce() {
+        this.log('等待卖出订单完成（1秒超时）...', 'info');
+
+        return new Promise((resolve, reject) => {
+            let checkCount = 0;
+            const maxChecks = 4; // 1秒内最多检查4次（每250ms一次）
+            
+            const checkInterval = setInterval(async () => {
+                checkCount++;
+                
+                if (!this.isRunning) {
+                    clearInterval(checkInterval);
+                    resolve(false);
+                    return;
+                }
+
+                try {
+                    const isComplete = await this.checkSellOrderComplete();
+                    if (isComplete) {
+                        clearInterval(checkInterval);
+                        this.log('卖出订单在1秒内完成', 'success');
+                        resolve(true);
+                        return;
+                    }
+                    
+                    if (checkCount >= maxChecks) {
+                        clearInterval(checkInterval);
+                        this.log('卖出订单1秒内未完成，需要重试', 'info');
+                        resolve(false);
+                        return;
+                    }
+                } catch (error) {
+                    this.log(`检查卖出状态出错: ${error.message}`, 'error');
+                    clearInterval(checkInterval);
+                    reject(error);
+                }
+            }, 250); // 每250ms检查一次
+        });
+    }
+
+    // 保留原有的等待方法作为备用
     async waitForSellComplete() {
         this.currentState = 'monitoring_sell';
         this.log('等待卖出订单完成...', 'info');
@@ -1314,6 +1434,213 @@ class BinanceAutoTrader {
         }
         
         return false;
+    }
+
+    async cancelAllOrders() {
+        this.log('开始取消所有当前委托...', 'info');
+        
+        try {
+            // 先确保在当前委托选项卡
+            await this.switchToCurrentOrders();
+            
+            // 查找"全部取消"按钮
+            const cancelAllButton = await this.findCancelAllButton();
+            
+            if (cancelAllButton) {
+                this.log('找到全部取消按钮，点击取消所有委托', 'info');
+                cancelAllButton.click();
+                
+                // 等待确认弹窗出现并点击确认
+                const confirmSuccess = await this.handleCancelConfirmDialog();
+                if (!confirmSuccess) {
+                    throw new Error('取消委托确认弹窗处理失败');
+                }
+                
+                // 等待取消生效
+                await this.sleep(500);
+                
+                // 验证是否成功取消
+                const ordersRemain = await this.checkIfOrdersRemain();
+                if (!ordersRemain) {
+                    this.log('✅ 成功取消所有委托', 'success');
+                    return true;
+                } else {
+                    this.log('⚠️ 取消委托可能未完全生效', 'info');
+                    return true; // 仍然返回true，因为按钮已点击
+                }
+            } else {
+                this.log('未找到全部取消按钮，可能没有活跃委托', 'info');
+                return true;
+            }
+        } catch (error) {
+            this.log(`取消委托失败: ${error.message}`, 'error');
+            throw error;
+        }
+    }
+
+    async findCancelAllButton() {
+        // 方法1：根据用户提供的具体选择器查找
+        let cancelButton = document.querySelector('th[aria-colindex="8"] .text-TextLink');
+        if (cancelButton && cancelButton.textContent.includes('全部取消')) {
+            return cancelButton;
+        }
+
+        // 方法2：查找表头中的全部取消按钮
+        const tableHeaders = document.querySelectorAll('th.bn-web-table-cell');
+        for (const header of tableHeaders) {
+            const textLink = header.querySelector('.text-TextLink');
+            if (textLink && textLink.textContent.includes('全部取消')) {
+                return textLink;
+            }
+        }
+
+        // 方法3：更广泛的查找
+        const allCancelButtons = Array.from(document.querySelectorAll('.text-TextLink, button, div')).filter(btn => 
+            btn.textContent.includes('全部取消') && 
+            btn.offsetParent !== null // 确保元素可见
+        );
+
+        if (allCancelButtons.length > 0) {
+            return allCancelButtons[0];
+        }
+
+        // 方法4：查找包含"取消"的链接或按钮
+        const cancelElements = Array.from(document.querySelectorAll('[class*="cursor-pointer"]')).filter(el => 
+            el.textContent.includes('全部取消')
+        );
+
+        if (cancelElements.length > 0) {
+            return cancelElements[0];
+        }
+
+        return null;
+    }
+
+    async handleCancelConfirmDialog() {
+        this.log('等待取消确认弹窗出现...', 'info');
+        
+        const maxWaitTime = 3000; // 最多等待3秒
+        const checkInterval = 200; // 每200ms检查一次
+        const maxChecks = maxWaitTime / checkInterval;
+        
+        for (let i = 0; i < maxChecks; i++) {
+            await this.sleep(checkInterval);
+            
+            const confirmButton = this.findCancelConfirmButton();
+            if (confirmButton) {
+                this.log('✅ 发现取消确认弹窗，点击确认', 'success');
+                confirmButton.click();
+                await this.sleep(300);
+                this.log('✅ 已确认取消所有订单', 'success');
+                return true;
+            }
+            
+            this.log(`等待确认弹窗... (${i + 1}/${maxChecks})`, 'info');
+        }
+        
+        this.log('❌ 等待超时，未发现取消确认弹窗', 'error');
+        return false;
+    }
+
+    findCancelConfirmButton() {
+        // 方法1：根据用户提供的具体DOM结构查找
+        const modalConfirm = document.querySelector('.bn-modal-confirm');
+        if (modalConfirm) {
+            // 检查是否包含"确定取消全部订单？"文本
+            if (modalConfirm.textContent.includes('确定取消全部订单')) {
+                const confirmButton = modalConfirm.querySelector('.bn-modal-confirm-actions button.bn-button__primary');
+                if (confirmButton && confirmButton.textContent.includes('确认')) {
+                    return confirmButton;
+                }
+            }
+        }
+
+        // 方法2：查找包含确认取消文本的弹窗
+        const confirmDialogs = Array.from(document.querySelectorAll('.bn-modal-confirm, [class*="modal"], [class*="dialog"]'));
+        for (const dialog of confirmDialogs) {
+            if (dialog.textContent.includes('确定取消全部订单') || 
+                dialog.textContent.includes('取消全部') ||
+                dialog.textContent.includes('确认取消')) {
+                const confirmButton = dialog.querySelector('button.bn-button__primary') ||
+                                    dialog.querySelector('button[class*="primary"]') ||
+                                    Array.from(dialog.querySelectorAll('button')).find(btn => 
+                                        btn.textContent.includes('确认') && !btn.disabled
+                                    );
+                if (confirmButton) {
+                    return confirmButton;
+                }
+            }
+        }
+
+        // 方法3：查找任何包含"确认"文本的主要按钮
+        const allButtons = Array.from(document.querySelectorAll('button.bn-button__primary, button[class*="primary"]'));
+        for (const button of allButtons) {
+            if (button.textContent.includes('确认') && 
+                button.offsetParent !== null && // 确保按钮可见
+                button.closest('[class*="modal"], [class*="dialog"], .bn-modal-confirm')) { // 确保在弹窗中
+                return button;
+            }
+        }
+
+        // 方法4：更广泛的查找 - 任何可见的确认按钮
+        const visibleConfirmButtons = Array.from(document.querySelectorAll('button')).filter(btn => 
+            btn.textContent.includes('确认') && 
+            btn.offsetParent !== null && 
+            !btn.disabled &&
+            // 确保按钮在弹窗或模态框中
+            (btn.closest('[class*="modal"]') || btn.closest('[class*="dialog"]') || btn.closest('[class*="confirm"]'))
+        );
+
+        if (visibleConfirmButtons.length > 0) {
+            return visibleConfirmButtons[0];
+        }
+
+        return null;
+    }
+
+    async checkIfOrdersRemain() {
+        await this.sleep(100); // 等待界面更新
+        
+        const orderRows = this.getOrderTableRows();
+        
+        // 检查是否还有活跃的卖出订单
+        for (const row of orderRows) {
+            const rowText = row.textContent;
+            if (rowText.includes('卖出') || rowText.includes('Sell')) {
+                const statusCell = row.querySelector('td[aria-colindex="7"]');
+                if (statusCell) {
+                    const status = statusCell.textContent.trim();
+                    if (status.includes('新订单') || status.includes('部分成交') || 
+                        status.includes('New') || status.includes('Partial')) {
+                        return true; // 还有活跃订单
+                    }
+                }
+            }
+        }
+        
+        return false; // 没有活跃订单
+    }
+
+    async retrySellOrder() {
+        this.log('重新执行卖出订单...', 'info');
+        
+        try {
+            // 不需要切换标签，因为已经在卖出标签了
+            
+            // 重新设置最大数量
+            const setQuantitySuccess = await this.setMaxQuantityForSell();
+            if (!setQuantitySuccess) {
+                throw new Error('重新设置卖出数量失败');
+            }
+            
+            // 重新点击卖出按钮
+            await this.clickSellButton();
+            
+            this.log('重新提交卖出订单成功', 'success');
+        } catch (error) {
+            this.log(`重新执行卖出订单失败: ${error.message}`, 'error');
+            throw error;
+        }
     }
 
 
