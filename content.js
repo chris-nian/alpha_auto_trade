@@ -1274,7 +1274,7 @@ class BinanceAutoTrader {
         this.currentState = 'monitoring_sell';
         this.log('开始卖出订单监控（支持自动重试）...', 'info');
         
-        const maxRetryAttempts = 10; // 最多重试10次
+        const maxRetryAttempts = 3; // 最多重试3次
         let retryCount = 0;
         
         while (retryCount < maxRetryAttempts && this.isRunning) {
@@ -1355,43 +1355,6 @@ class BinanceAutoTrader {
         });
     }
 
-    // 保留原有的等待方法作为备用
-    async waitForSellComplete() {
-        this.currentState = 'monitoring_sell';
-        this.log('等待卖出订单完成...', 'info');
-
-        return new Promise((resolve, reject) => {
-            let checkCount = 0;
-            const maxChecks = 200; // 增加检查次数
-            
-            this.orderCheckInterval = setInterval(async () => {
-                checkCount++;
-                
-                if (!this.isRunning) {
-                    clearInterval(this.orderCheckInterval);
-                    resolve();
-                    return;
-                }
-
-                if (checkCount > maxChecks) {
-                    clearInterval(this.orderCheckInterval);
-                    reject(new Error('卖出订单等待超时'));
-                    return;
-                }
-
-                try {
-                    const isComplete = await this.checkSellOrderComplete();
-                    if (isComplete) {
-                        clearInterval(this.orderCheckInterval);
-                        this.log('卖出订单完成', 'success');
-                        resolve();
-                    }
-                } catch (error) {
-                    this.log(`检查卖出状态出错: ${error.message}`, 'error');
-                }
-            }, 300); // 减少检查间隔到300ms
-        });
-    }
 
     async checkSellOrderComplete() {
         // 检查是否有卖出委托记录存在
