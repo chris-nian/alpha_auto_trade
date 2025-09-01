@@ -1098,6 +1098,81 @@ class BinanceAutoTrader {
         this.log('❌ 所有方法都无法设置滑杆到100%', 'error');
         return false;
     }
+
+    async setMaxQuantityForSellOnce() {
+        this.log('尝试设置最大卖出数量（仅一次）...', 'info');
+        
+        // 先清理缓存，确保获取最新元素
+        this.clearElementCache();
+        
+        this.log('第 1 次尝试设置最大数量...', 'info');
+        
+        // 方法1: 点击100%按钮
+        const maxButtons = [
+            ...Array.from(document.querySelectorAll('button')).filter(btn => 
+                btn.textContent.includes('100%') && btn.offsetParent !== null
+            ),
+            ...Array.from(document.querySelectorAll('div')).filter(div => 
+                div.textContent.includes('100%') && div.onclick && div.offsetParent !== null
+            )
+        ];
+        
+        if (maxButtons.length > 0) {
+            this.log(`找到${maxButtons.length}个100%按钮`, 'info');
+            maxButtons[0].click();
+            await this.sleep(300);
+            
+            if (await this.verifySliderValue()) {
+                this.log('✅ 100%按钮设置成功', 'success');
+                return true;
+            }
+        }
+        
+        // 方法2: 直接操作滑杆
+        const slider = document.querySelector('.bn-slider');
+        if (slider) {
+            this.log(`找到滑杆，当前值: ${slider.value}`, 'info');
+            
+            // 多种方式设置滑杆值
+            slider.value = '100';
+            slider.setAttribute('aria-valuenow', '100');
+            slider.setAttribute('aria-valuetext', '100 units');
+            
+            // 触发多个事件
+            const events = ['input', 'change', 'blur', 'focus'];
+            events.forEach(eventType => {
+                slider.dispatchEvent(new Event(eventType, { bubbles: true }));
+            });
+            
+            // 也试试触发鼠标事件
+            slider.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+            
+            await this.sleep(300);
+            
+            if (await this.verifySliderValue()) {
+                this.log('✅ 滑杆直接设置成功', 'success');
+                return true;
+            }
+        }
+        
+        // 方法3: 点击滑杆的100%点
+        const sliderSteps = document.querySelectorAll('.bn-slider-track-step');
+        if (sliderSteps.length > 0) {
+            const lastStep = sliderSteps[sliderSteps.length - 1]; // 最后一个应该是100%
+            this.log(`点击滑杆100%点`, 'info');
+            lastStep.click();
+            await this.sleep(300);
+            
+            if (await this.verifySliderValue()) {
+                this.log('✅ 滑杆点击设置成功', 'success');
+                return true;
+            }
+        }
+        
+        this.log(`第 1 次尝试失败，滑杆值: ${slider ? slider.value : '未找到滑杆'}`, 'error');
+        this.log('❌ 取消委托后首次设置滑杆失败', 'error');
+        return false;
+    }
     
     async verifySliderValue() {
         const slider = document.querySelector('.bn-slider');
@@ -1279,7 +1354,7 @@ class BinanceAutoTrader {
         
         while (retryCount < maxRetryAttempts && this.isRunning) {
             try {
-                // 每次尝试等待1秒
+                // 每次尝试等待4秒
                 const sellCompleted = await this.waitForSellCompleteOnce();
                 
                 if (sellCompleted) {
@@ -1287,9 +1362,9 @@ class BinanceAutoTrader {
                     return;
                 }
                 
-                // 如果1秒内没有完成，执行重试逻辑
+                // 如果4秒内没有完成，执行重试逻辑
                 retryCount++;
-                this.log(`卖出订单1秒内未完成，开始第${retryCount}次重试...`, 'info');
+                this.log(`卖出订单4秒内未完成，开始第${retryCount}次重试...`, 'info');
                 
                 // 取消所有当前委托
                 await this.cancelAllOrders();
@@ -1316,11 +1391,11 @@ class BinanceAutoTrader {
     }
 
     async waitForSellCompleteOnce() {
-        this.log('等待卖出订单完成（1秒超时）...', 'info');
+        this.log('等待卖出订单完成（4秒超时）...', 'info');
 
         return new Promise((resolve, reject) => {
             let checkCount = 0;
-            const maxChecks = 4; // 1秒内最多检查4次（每250ms一次）
+            const maxChecks = 16; // 4秒内最多检查16次（每250ms一次）
             
             const checkInterval = setInterval(async () => {
                 checkCount++;
@@ -1335,14 +1410,14 @@ class BinanceAutoTrader {
                     const isComplete = await this.checkSellOrderComplete();
                     if (isComplete) {
                         clearInterval(checkInterval);
-                        this.log('卖出订单在1秒内完成', 'success');
+                        this.log('卖出订单在4秒内完成', 'success');
                         resolve(true);
                         return;
                     }
                     
                     if (checkCount >= maxChecks) {
                         clearInterval(checkInterval);
-                        this.log('卖出订单1秒内未完成，需要重试', 'info');
+                        this.log('卖出订单4秒内未完成，需要重试', 'info');
                         resolve(false);
                         return;
                     }
@@ -1590,10 +1665,12 @@ class BinanceAutoTrader {
         try {
             // 不需要切换标签，因为已经在卖出标签了
             
-            // 重新设置最大数量
-            const setQuantitySuccess = await this.setMaxQuantityForSell();
+            // 重新设置最大数量，但只尝试一次
+            const setQuantitySuccess = await this.setMaxQuantityForSellOnce();
             if (!setQuantitySuccess) {
-                throw new Error('重新设置卖出数量失败');
+                // 如果第1次尝试失败，直接跳过当前卖出逻辑
+                this.log('❌ 取消委托后第1次设置滑杆失败，跳过当前卖出逻辑，进入下一轮买入', 'error');
+                throw new Error('取消委托后设置滑杆失败，跳过卖出');
             }
             
             // 重新点击卖出按钮
