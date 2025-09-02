@@ -303,8 +303,8 @@ class BinanceAutoTrader {
             
             this.log('紧急卖出订单已提交', 'success');
             
-            // 等待卖出完成（使用重试逻辑确保紧急卖出成功）
-            await this.waitForSellCompleteWithRetry();
+            // 等待卖出完成
+            await this.waitForSellCompleteOnce();
             
             this.log('紧急卖出完成', 'success');
         } catch (error) {
@@ -358,8 +358,8 @@ class BinanceAutoTrader {
             
             this.log('安全卖出订单已提交', 'success');
             
-            // 等待卖出完成（使用重试逻辑确保安全卖出成功）
-            await this.waitForSellCompleteWithRetry();
+            // 等待卖出完成
+            await this.waitForSellCompleteOnce();
             
             this.log('✅ 所有代币已成功卖出', 'success');
             
@@ -435,17 +435,11 @@ class BinanceAutoTrader {
                 }
 
                 // 步骤3: 执行卖出
-                const sellSuccess = await this.executeSellWithRetry();
+                await this.executeSell();
                 if (!this.isRunning) break;
-                
-                if (!sellSuccess) {
-                    this.log('卖出操作失败，跳过此轮交易', 'error');
-                    await this.sleep(2000); // 等待2秒后重试
-                    continue;
-                }
 
-                // 步骤4: 等待卖出完成（使用重试逻辑）
-                await this.waitForSellCompleteWithRetry();
+                // 步骤4: 等待卖出完成
+                await this.waitForSellCompleteOnce();
                 if (!this.isRunning) break;
 
                 consecutiveErrors = 0; // 重置错误计数
@@ -519,21 +513,6 @@ class BinanceAutoTrader {
         }
     }
 
-    async executeSellWithRetry(maxRetries = 3) {
-        for (let i = 0; i < maxRetries; i++) {
-            try {
-                await this.executeSell();
-                return true; // 返回成功标记
-            } catch (error) {
-                this.log(`卖出操作失败 (${i + 1}/${maxRetries}): ${error.message}`, 'error');
-                if (i === maxRetries - 1) {
-                    this.log('所有卖出重试都失败，跳过此轮交易', 'error');
-                    return false; // 返回失败标记
-                }
-                await this.sleep(2000);
-            }
-        }
-    }
 
     async executeBuy() {
         this.tradeStartTime = Date.now(); // 记录交易开始时间
@@ -1345,50 +1324,6 @@ class BinanceAutoTrader {
         return null;
     }
 
-    async waitForSellCompleteWithRetry() {
-        this.currentState = 'monitoring_sell';
-        this.log('开始卖出订单监控（支持自动重试）...', 'info');
-        
-        const maxRetryAttempts = 3; // 最多重试3次
-        let retryCount = 0;
-        
-        while (retryCount < maxRetryAttempts && this.isRunning) {
-            try {
-                // 每次尝试等待4秒
-                const sellCompleted = await this.waitForSellCompleteOnce();
-                
-                if (sellCompleted) {
-                    this.log('卖出订单成功完成', 'success');
-                    return;
-                }
-                
-                // 如果4秒内没有完成，执行重试逻辑
-                retryCount++;
-                this.log(`卖出订单4秒内未完成，开始第${retryCount}次重试...`, 'info');
-                
-                // 取消所有当前委托
-                await this.cancelAllOrders();
-                
-                // 等待取消完成
-                await this.sleep(200);
-                
-                // 重新执行卖出（不包括切换标签，因为已经在卖出标签了）
-                await this.retrySellOrder();
-                
-            } catch (error) {
-                this.log(`卖出重试过程出错: ${error.message}`, 'error');
-                retryCount++;
-                
-                if (retryCount >= maxRetryAttempts) {
-                    throw new Error(`卖出重试达到最大次数(${maxRetryAttempts})，失败`);
-                }
-                
-                await this.sleep(500); // 出错后等待更久一点
-            }
-        }
-        
-        throw new Error('卖出订单重试失败');
-    }
 
     async waitForSellCompleteOnce() {
         this.log('等待卖出订单完成（4秒超时）...', 'info');
@@ -1410,14 +1345,14 @@ class BinanceAutoTrader {
                     const isComplete = await this.checkSellOrderComplete();
                     if (isComplete) {
                         clearInterval(checkInterval);
-                        this.log('卖出订单在4秒内完成', 'success');
+                        this.log('卖出订单完成', 'success');
                         resolve(true);
                         return;
                     }
                     
                     if (checkCount >= maxChecks) {
                         clearInterval(checkInterval);
-                        this.log('卖出订单4秒内未完成，需要重试', 'info');
+                        this.log('卖出订单超时未完成', 'info');
                         resolve(false);
                         return;
                     }
@@ -1659,29 +1594,6 @@ class BinanceAutoTrader {
         return false; // 没有活跃订单
     }
 
-    async retrySellOrder() {
-        this.log('重新执行卖出订单...', 'info');
-        
-        try {
-            // 不需要切换标签，因为已经在卖出标签了
-            
-            // 重新设置最大数量，但只尝试一次
-            const setQuantitySuccess = await this.setMaxQuantityForSellOnce();
-            if (!setQuantitySuccess) {
-                // 如果第1次尝试失败，直接跳过当前卖出逻辑
-                this.log('❌ 取消委托后第1次设置滑杆失败，跳过当前卖出逻辑，进入下一轮买入', 'error');
-                throw new Error('取消委托后设置滑杆失败，跳过卖出');
-            }
-            
-            // 重新点击卖出按钮
-            await this.clickSellButton();
-            
-            this.log('重新提交卖出订单成功', 'success');
-        } catch (error) {
-            this.log(`重新执行卖出订单失败: ${error.message}`, 'error');
-            throw error;
-        }
-    }
 
 
     clearLogs() {
